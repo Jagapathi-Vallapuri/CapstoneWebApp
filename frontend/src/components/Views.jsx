@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { ArrowUpTrayIcon } from '@heroicons/react/24/outline';
 import { apiService } from '../services/api';
 import { Card } from './UIPrimitives';
@@ -183,5 +185,59 @@ export function UploadsView({ filesList, loadingProfile, token }) {
         )}
       </div>
     </Card>
+  );
+}
+
+export function ChatView({ token, apiService, messages, setMessages }) {
+  const [text, setText] = useState('');
+  const [sending, setSending] = useState(false);
+
+  const send = async () => {
+    if (!text || !token) return;
+    const userMsg = { role: 'user', content: text };
+    // append user message
+    setMessages(m => [...m, { id: Date.now() + Math.random(), ...userMsg }]);
+    setText('');
+    setSending(true);
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}/chat/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ message: userMsg.content })
+      });
+      if (!res.ok) throw new Error('Chat request failed');
+      const data = await res.json();
+      setMessages(m => [...m, { id: Date.now() + Math.random(), role: 'assistant', content: data.reply }]);
+    } catch (e) {
+      setMessages(m => [...m, { id: Date.now() + Math.random(), role: 'assistant', content: 'Error: could not get response' }]);
+    } finally { setSending(false); }
+  };
+
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      <div className="flex-1 min-h-0 overflow-auto rounded-lg border border-gray-100 bg-white p-3">
+        {(!messages || messages.length) === 0 ? <div className="text-sm text-gray-500">No messages yet. Ask something about your documents or health.</div> : messages.map(m => (
+          <div key={m.id} className={`my-2 max-w-[85%] ${m.role === 'user' ? 'ml-auto text-right' : 'mr-auto text-left'}`}>
+            <div className={`inline-block rounded-lg px-3 py-2 ${m.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-900'}`}>
+              {m.role === 'assistant' ? (
+                <div className="prose max-w-none text-sm">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content || ''}</ReactMarkdown>
+                </div>
+              ) : (
+                <div className="text-sm">{m.content}</div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-3 flex gap-2">
+        <input value={text} onChange={e => setText(e.target.value)} placeholder="Ask the assistant..." className="flex-1 rounded-lg border border-gray-300 px-3 py-2" />
+        <button disabled={sending} onClick={send} className="rounded-lg bg-indigo-600 px-4 py-2 text-white">{sending ? 'Sending…' : 'Send'}</button>
+      </div>
+    </div>
   );
 }

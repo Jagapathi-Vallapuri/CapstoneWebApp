@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { apiService } from '../services/api';
 import { ArrowUpTrayIcon, UserIcon, EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
 import ProfileMenu from './ProfileMenu';
-import { UploadView, ProfileView, UploadsView, EditMedicalView } from './Views';
+import { UploadView, ProfileView, UploadsView, EditMedicalView, ChatView } from './Views';
 import { Card } from './UIPrimitives';
 
 
@@ -83,6 +83,7 @@ export default function OnePageApp() {
     const [me, setMe] = useState(null);
     const [showProfileMenu, setShowProfileMenu] = useState(false);
     const menuRef = useRef(null);
+    const [chatMessages, setChatMessages] = useState([]);
 
     const canLogin = useMemo(() => email && password, [email, password]);
     const canRegister = useMemo(() => name && email && password, [name, email, password]);
@@ -356,6 +357,16 @@ export default function OnePageApp() {
                             {view === 'uploads' && (
                                 <UploadsView filesList={filesList} loadingProfile={loadingProfile} token={token} />
                             )}
+                            {view === 'chat' && (
+                                <div className="flex flex-col h-[calc(100vh-220px)]">
+                                    <Card className="flex flex-col flex-1">
+                                        <h2 className="text-xl font-semibold text-gray-900">Assistant</h2>
+                                        <div className="mt-4 flex-1 min-h-0">
+                                            <ChatView token={token} apiService={apiService} messages={chatMessages} setMessages={setChatMessages} />
+                                        </div>
+                                    </Card>
+                                </div>
+                            )}
                         </div>
                     </div>
                 )}
@@ -365,6 +376,14 @@ export default function OnePageApp() {
             <div className="border-t border-black/5 bg-white/60 py-8 text-center text-sm text-gray-500 backdrop-blur">
                 Testing - Capstone Project
             </div>
+            {/* Floating chat button */}
+            <button
+                onClick={() => setView(v => v === 'chat' ? 'upload' : 'chat')}
+                aria-label={view === 'chat' ? 'Close chat' : 'Open chat'}
+                className="fixed right-6 bottom-6 z-50 rounded-full bg-indigo-600 p-4 text-white shadow-lg hover:bg-indigo-500"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8a9.77 9.77 0 01-4-.8L3 21l1.8-4.2A7.97 7.97 0 013 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+            </button>
         </div>
     );
 }

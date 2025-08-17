@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from routes import auth, files, extraction, medical_profile
+from routes import auth, files, extraction, medical_profile, chat
 import logging
 from db.base import Base
 from db.session import engine
@@ -36,6 +36,7 @@ app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(files.router, prefix="/files", tags=["files"])
 app.include_router(extraction.router, prefix="/extract", tags=["extraction"])
 app.include_router(medical_profile.router, prefix="/profile", tags=["profile"])
+app.include_router(chat.router, prefix="/chat", tags=["chat"])
 
 @app.on_event("startup")
 def startup_event():

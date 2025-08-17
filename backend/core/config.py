@@ -19,6 +19,14 @@ class Settings(BaseSettings):
     # CORS origins
     ALLOWED_ORIGINS: List[str] = Field(default_factory=list)
 
+    # LLM / Chat settings
+    LLM_PROVIDER: str = "gemini"  # gemini | lmstudio | openai-compatible
+    LLM_API_URL: Optional[str] = None
+    LLM_API_KEY: Optional[str] = None
+    LLM_MODEL: Optional[str] = None  # e.g., gemini-2.5-flash
+    LLM_MAX_TOKENS: int = 512
+    LLM_TEMPERATURE: float = 0.2
+
     class Config:
         env_file = ".env"
 
