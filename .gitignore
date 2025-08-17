@@ -1,0 +1,83 @@
+# -----------------------------
+# Repo-level .gitignore for Capstone
+# Covers backend (Python) and frontend (Node/Vite)
+# -----------------------------
+
+# ---------- OS files ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- Python / Backend ----------
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+backend/.venv/
+
+# Environments and secrets
+.env
+backend/.env
+.env.local
+.env.*.local
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# MyPy / caches
+.mypy_cache/
+.cache/
+
+# Database
+*.sqlite3
+*.db
+
+# ---------- Node / Frontend ----------
+frontend/node_modules/
+node_modules/
+
+# Vite / build
+frontend/dist/
+dist/
+.vite/
+
+# Environment files (keep example variants in repo)
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---------- IDEs / Editors ----------
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# OS generated files
+Icon?
+
+# Misc
+coverage/
+reports/
