@@ -10,7 +10,7 @@ import re
 
 router = APIRouter()
 
-@router.post("/extract/{file_id}", response_model=PrescriptionOut)
+@router.post("/{file_id}", response_model=PrescriptionOut)
 def extract_information(
     file_id: str,
     db: Session = Depends(get_db),

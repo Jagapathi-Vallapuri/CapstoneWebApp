@@ -22,7 +22,7 @@ def create_medical_profile(
     
     new_medical_profile = MedicalProfile(
         user_id=current_user.id,
-        **medical_profile.dict()
+        **medical_profile.model_dump()
     )
     db.add(new_medical_profile)
     db.commit()
@@ -50,7 +50,7 @@ def update_medical_profile(
         raise HTTPException(status_code=404, detail="Medical profile not found")
     
     # Update the medical profile fields
-    for field, value in medical_profile.dict().items():
+    for field, value in medical_profile.model_dump().items():
         setattr(db_medical_profile, field, value)
     
     db.commit()

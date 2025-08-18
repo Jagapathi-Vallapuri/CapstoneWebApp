@@ -129,7 +129,7 @@ Files
 - GET `/files/{file_id}/presign?download=true|false` – presigned URL to view/download
 
 Extraction
-- POST `/extract/extract/{file_id}` – placeholder extraction creates a `Prescription` entry
+- POST `/extract/{file_id}` – placeholder extraction creates a `Prescription` entry
 
 Medical Profile
 - POST `/profile/medical-profile` – create profile (one per user)

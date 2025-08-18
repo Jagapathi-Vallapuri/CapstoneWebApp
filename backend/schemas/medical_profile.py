@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional
 
 class MedicalProfileBase(BaseModel):
@@ -20,5 +20,4 @@ class MedicalProfileOut(MedicalProfileBase):
     id: str
     user_id: str
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
