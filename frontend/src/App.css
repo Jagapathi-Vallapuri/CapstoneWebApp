@@ -2,4 +2,46 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Ensure root fills the viewport so flex layouts work correctly */
+html, body, #root {
+  height: 100%;
+  overflow: hidden; /* prevent window-level scrolling */
+}
+
+/* Make the app container use full viewport height with dynamic viewport units for mobile browser chrome */
+.app-root {
+  min-height: 100dvh;
+  height: calc(var(--vh, 1vh) * 100);
+}
+
+/* Utility to make inner panels scrollable while keeping footer visible */
+.content-scroll {
+  overflow: auto;
+}
+
+/* Chat scroll styling */
+.chat-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(79, 70, 229, 0.6) rgba(229, 231, 235, 0.6); /* firefox */
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+}
+
+/* Webkit-based browsers */
+.chat-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+.chat-scroll::-webkit-scrollbar-track {
+  background: rgba(229,231,235,0.4);
+  border-radius: 9999px;
+}
+.chat-scroll::-webkit-scrollbar-thumb {
+  background: rgba(79,70,229,0.8);
+  border-radius: 9999px;
+  border: 2px solid rgba(229,231,235,0.6);
+}
+.chat-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(79,70,229,1);
+}
+
 /* Custom styles can go here if needed */

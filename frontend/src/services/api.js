@@ -1,6 +1,5 @@
 // API service to communicate with the FastAPI backend
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') || 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://192.168.0.102:8000';
 
 const parseError = async (response) => {
   try {

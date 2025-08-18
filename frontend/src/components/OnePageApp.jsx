@@ -224,13 +224,62 @@ export default function OnePageApp() {
         }
     }, [isAuthenticated]);
 
+    // Set CSS --vh variable to handle mobile browser chrome (100dvh issues)
+    useEffect(() => {
+        const setVh = () => {
+            document.documentElement.style.setProperty('--vh', `${window.innerHeight * 0.01}px`);
+        };
+        setVh();
+        window.addEventListener('resize', setVh);
+        return () => window.removeEventListener('resize', setVh);
+    }, []);
+
+    // Refs for layout elements so we can compute the exact available height for the chat pane
+    const headerRef = useRef(null);
+    const mainRef = useRef(null);
+    const footerRef = useRef(null);
+    const [chatHeight, setChatHeight] = useState(null);
+
+    // Compute available height for chat area and update on resize / layout changes
+    useEffect(() => {
+        const compute = () => {
+            const vh = window.innerHeight;
+            const headerH = headerRef.current?.offsetHeight || 0;
+            const footerH = footerRef.current?.offsetHeight || 0;
+            let paddingTop = 0, paddingBottom = 0;
+            if (mainRef.current) {
+                const cs = getComputedStyle(mainRef.current);
+                paddingTop = parseFloat(cs.paddingTop) || 0;
+                paddingBottom = parseFloat(cs.paddingBottom) || 0;
+            }
+            // small gap allowance for spacing (headers, margins)
+            const gap = 16;
+            const avail = Math.max(0, vh - headerH - footerH - paddingTop - paddingBottom - gap);
+            setChatHeight(avail);
+        };
+
+        compute();
+        window.addEventListener('resize', compute);
+        // Also recompute when fonts/load completes
+        window.addEventListener('orientationchange', compute);
+        const ro = new ResizeObserver(compute);
+        if (headerRef.current) ro.observe(headerRef.current);
+        if (footerRef.current) ro.observe(footerRef.current);
+        if (mainRef.current) ro.observe(mainRef.current);
+        return () => {
+            window.removeEventListener('resize', compute);
+            window.removeEventListener('orientationchange', compute);
+            ro.disconnect();
+        };
+    }, []);
+
     return (
-        <div className="relative min-h-screen flex flex-col bg-gradient-to-br from-indigo-50 via-white to-purple-50 overflow-x-hidden">
+        <div className="app-root relative flex flex-col bg-gradient-to-br from-indigo-50 via-white to-purple-50 overflow-x-hidden" style={{ height: 'calc(var(--vh, 1vh) * 100)' }}>
             <Toaster position="top-center" />
 
             {/* Header */}
-            <div className="sticky top-0 z-10 border-b border-black/5 bg-white/70 backdrop-blur">
-                <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
+            <div ref={headerRef} className="sticky top-0 z-10 border-b border-black/5 bg-white/70 backdrop-blur">
+                <div ref={null} className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
                     <div className="flex items-center gap-2">
                         <div className="grid h-8 w-8 place-items-center rounded-lg bg-indigo-600 text-white shadow">
                             <UserIcon className="h-5 w-5" />
@@ -261,7 +310,7 @@ export default function OnePageApp() {
             </div>
 
             {/* Content */}
-            <main className="mx-auto max-w-6xl px-4 pt-10 pb-16 flex-1 w-full">
+            <main className="mx-auto max-w-6xl px-4 pt-10 pb-16 flex-1 w-full overflow-auto">
                 {!isAuthenticated ? (
                     <div className="mx-auto max-w-lg">
                         <Card>
@@ -358,10 +407,24 @@ export default function OnePageApp() {
                                 <UploadsView filesList={filesList} loadingProfile={loadingProfile} token={token} />
                             )}
                             {view === 'chat' && (
-                                <div className="flex flex-col h-[calc(100vh-220px)]">
-                                    <Card className="flex flex-col flex-1">
-                                        <h2 className="text-xl font-semibold text-gray-900">Assistant</h2>
-                                        <div className="mt-4 flex-1 min-h-0">
+                                <div className="flex flex-col" style={{ height: chatHeight ? `${chatHeight}px` : `calc(var(--vh, 1vh) * 100 - 220px)` }}>
+                                    <Card className="flex flex-col h-full" allowOverflow>
+                                        <div className="flex items-center justify-between">
+                                            <h2 className="text-xl font-semibold text-gray-900">Assistant</h2>
+                                            <div className="flex items-center gap-2">
+                                                <button
+                                                    onClick={() => {
+                                                        if (chatMessages.length === 0) return;
+                                                        if (window.confirm('Clear chat history?')) setChatMessages([]);
+                                                    }}
+                                                    aria-label="Clear chat"
+                                                    className="text-sm text-gray-500 hover:text-gray-700 rounded-md px-2 py-1 border border-transparent hover:bg-gray-100"
+                                                >
+                                                    Clear
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div className="mt-4 flex-1 min-h-0 overflow-auto chat-scroll" style={{ maxHeight: chatHeight }}>
                                             <ChatView token={token} apiService={apiService} messages={chatMessages} setMessages={setChatMessages} />
                                         </div>
                                     </Card>
@@ -373,7 +436,7 @@ export default function OnePageApp() {
             </main>
 
             {/* Footer */}
-            <div className="border-t border-black/5 bg-white/60 py-8 text-center text-sm text-gray-500 backdrop-blur">
+            <div ref={footerRef} className="border-t border-black/5 bg-white/60 py-8 text-center text-sm text-gray-500 backdrop-blur">
                 Testing - Capstone Project
             </div>
             {/* Floating chat button */}
