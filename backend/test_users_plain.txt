@@ -1,0 +1,5 @@
+Test User 1|testuser1@example.com|user@password|45|MALE||Hypertension|High blood pressure (2019)|Lisinopril 10mg daily||Penicillin|Appendectomy (2015)|Father: heart disease|Appendectomy|Influenza (2024)|Non-smoker, walks 30m daily
+Test User 2|testuser2@example.com|user@password|58|FEMALE||Type 2 Diabetes|Diabetes (2020)|Metformin 500mg twice daily||None|Routine diabetic care|Mother: diabetes||COVID-19 booster (2023)|Diet-controlled, exercises weekly
+Test User 3|testuser3@example.com|user@password|28|OTHER||Asthma|Childhood asthma, persists|Salbutamol inhaler PRN||Peanuts|Seasonal exacerbations|Sibling: asthma|||Uses inhaler as needed
+Test User 4|testuser4@example.com|user@password|33|FEMALE||None|||||None|No major illnesses|No known hereditary disease|||Active, cycles to work
+Test User 5|testuser5@example.com|user@password|49|MALE||Hypothyroidism|Hypothyroidism (2021)|Levothyroxine 75mcg daily||None|Thyroid monitoring every 6 months|Mother: hypothyroidism|||Non-smoker

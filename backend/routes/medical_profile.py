@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
 from db.session import get_db
 from models.user import User
 from models.medical_profile import MedicalProfile
 from schemas.medical_profile import MedicalProfileCreate, MedicalProfileOut
 from utils.security import get_current_user
+from typing import Dict, Any
 
 router = APIRouter()
 
@@ -49,10 +50,43 @@ def update_medical_profile(
     if not db_medical_profile:
         raise HTTPException(status_code=404, detail="Medical profile not found")
     
-    # Update the medical profile fields
     for field, value in medical_profile.model_dump().items():
         setattr(db_medical_profile, field, value)
     
+    db.commit()
+    db.refresh(db_medical_profile)
+    return db_medical_profile
+
+@router.patch("/medical-profile", response_model=MedicalProfileOut)
+def patch_medical_profile(
+    medical_profile: Dict[str, Any] = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    db_medical_profile = db.query(MedicalProfile).filter(MedicalProfile.user_id == current_user.id).first()
+    if not db_medical_profile:
+        raise HTTPException(status_code=404, detail="Medical profile not found")
+
+    # Only allow updates to known fields
+    allowed_fields = {
+        "present_conditions",
+        "diagnosed_conditions",
+        "medications_past",
+        "medications_current",
+        "allergies",
+        "medical_history",
+        "family_history",
+        "surgeries",
+        "immunizations",
+        "lifestyle_factors",
+    }
+    update_data = {k: v for k, v in (medical_profile or {}).items() if k in allowed_fields}
+    if not update_data:
+        return db_medical_profile
+
+    for field, value in update_data.items():
+        setattr(db_medical_profile, field, value)
+
     db.commit()
     db.refresh(db_medical_profile)
     return db_medical_profile

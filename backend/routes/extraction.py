@@ -17,18 +17,16 @@ def extract_information(
     current_user=Depends(get_current_user)
 ):
     try:
-        # Sanitize file_id input
         file_id = re.sub(r'[^a-zA-Z0-9-]', '', file_id)
         db_file = db.query(UploadedFile).filter(UploadedFile.id == file_id).first()
         if not db_file:
             raise HTTPException(status_code=404, detail={"error": "File not found"})
         if db_file.user_id != current_user.id:
             raise HTTPException(status_code=403, detail={"error": "Not authorized to extract this file."})
-        # Extraction logic would go here
         prescription = Prescription(
             user_id=db_file.user_id,
             file_id=db_file.id,
-            extracted_fields="{}"  # Placeholder
+            extracted_fields="{}"
         )
         db.add(prescription)
         db.commit()

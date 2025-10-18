@@ -81,3 +81,8 @@ Icon?
 # Misc
 coverage/
 reports/
+
+testing/
+detection/
+logs/
+uploads/

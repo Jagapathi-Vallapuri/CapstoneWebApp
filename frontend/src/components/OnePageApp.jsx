@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { apiService } from '../services/api';
 import { ArrowUpTrayIcon, UserIcon, EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
 import ProfileMenu from './ProfileMenu';
-import { UploadView, ProfileView, UploadsView, EditMedicalView, ChatView } from './Views';
+import { UploadView, ProfileView, UploadsView, EditMedicalView, ChatView, HomeView, ScheduleView } from './Views';
 import { Card } from './UIPrimitives';
 
 
@@ -61,9 +61,9 @@ export default function OnePageApp() {
     const { isAuthenticated, login, logout, token, user } = useAuth();
     const [view, setView] = useState(() => {
         try {
-            return localStorage.getItem('view') || 'upload';
-        } catch {
-            return 'upload';
+            return localStorage.getItem('view') || 'home';
+        } catch (_err) {
+            return 'home';
         }
     });
     const [authTab, setAuthTab] = useState('register');
@@ -74,10 +74,12 @@ export default function OnePageApp() {
     const [gender, setGender] = useState('');
     const [phone, setPhone] = useState('');
     const [file, setFile] = useState(null);
+    const [fileName, setFileName] = useState('');
     const defaultProfile = {
         present_conditions: '', diagnosed_conditions: '', medications_past: '', medications_current: '', allergies: '', medical_history: '', family_history: '', surgeries: '', immunizations: '', lifestyle_factors: ''
     };
     const [profile, setProfile] = useState(defaultProfile);
+    const [originalProfile, setOriginalProfile] = useState(defaultProfile);
     const [busy, setBusy] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
     const [me, setMe] = useState(null);
@@ -94,8 +96,8 @@ export default function OnePageApp() {
         try {
             await login(email, password);
             toast.success('Welcome back!');
-        } catch (e) {
-            toast.error(e.message || 'Login failed');
+        } catch (err) {
+            toast.error(err.message || 'Login failed');
         } finally { setBusy(false); }
     };
 
@@ -109,8 +111,8 @@ export default function OnePageApp() {
             await apiService.register(payload);
             toast.success('Account created. Please sign in.');
             setAuthTab('login');
-        } catch (e) {
-            toast.error(e.message || 'Registration failed');
+        } catch (err) {
+            toast.error(err.message || 'Registration failed');
         } finally { setBusy(false); }
     };
 
@@ -120,11 +122,12 @@ export default function OnePageApp() {
         try {
             const fd = new FormData();
             fd.append('file', file);
+            if (fileName && fileName.trim()) fd.append('display_name', fileName.trim());
             await apiService.uploadDocument(fd, token);
             toast.success('Uploaded!');
-        } catch (e) {
-            toast.error(e.message || 'Upload failed');
-        } finally { setBusy(false); setFile(null); }
+        } catch (err) {
+            toast.error(err.message || 'Upload failed');
+        } finally { setBusy(false); setFile(null); setFileName(''); }
     };
 
     const saveProfile = async () => {
@@ -134,17 +137,27 @@ export default function OnePageApp() {
             if (!profileExists) {
                 await apiService.createMedicalProfile(profile, token);
             } else {
-                await apiService.updateMedicalProfile(profile, token);
+                // Compute only changed fields and send a PATCH
+                const changes = {};
+                Object.keys(profile).forEach((k) => {
+                    if (profile[k] !== originalProfile[k]) {
+                        changes[k] = profile[k];
+                    }
+                });
+                if (Object.keys(changes).length > 0) {
+                    await apiService.patchMedicalProfile(changes, token);
+                }
             }
 
             // Re-fetch profile to ensure UI state matches server
             const pf = await apiService.getMedicalProfile(token);
             setProfile(pf || defaultProfile);
+            setOriginalProfile(pf || defaultProfile);
             setProfileExists(Boolean(pf));
             toast.success('Profile saved');
             setView('profile');
-        } catch (e) {
-            toast.error(e.message || 'Save failed');
+        } catch (err) {
+            toast.error(err.message || 'Save failed');
         } finally { setBusy(false); }
     };
 
@@ -153,7 +166,7 @@ export default function OnePageApp() {
     const [profileExists, setProfileExists] = useState(false);
 
     useEffect(() => {
-        if (!isAuthenticated || (view !== 'profile' && view !== 'uploads')) return;
+        if (!isAuthenticated || (view !== 'profile' && view !== 'uploads' && view !== 'home')) return;
         let mounted = true;
         const load = async () => {
             setLoadingProfile(true);
@@ -163,7 +176,7 @@ export default function OnePageApp() {
                         const meData = await apiService.getMe(token);
                         if (!mounted) return;
                         setMe(meData || user || null);
-                    } catch (e) {
+                    } catch (_err) {
                         // fallback to auth context user
                         setMe(user || null);
                     }
@@ -173,15 +186,18 @@ export default function OnePageApp() {
                         if (!mounted) return;
                         if (pf === null) {
                             // no profile yet
-                            setProfile({ present_conditions: '', diagnosed_conditions: '' });
+                            setProfile(defaultProfile);
+                            setOriginalProfile(defaultProfile);
                             setProfileExists(false);
                         } else {
                             setProfile(pf);
+                            setOriginalProfile(pf);
                             setProfileExists(true);
                         }
-                    } catch (e) {
+                    } catch (_err) {
                         // non-404 errors
-                        setProfile({ present_conditions: '', diagnosed_conditions: '' });
+                        setProfile(defaultProfile);
+                        setOriginalProfile(defaultProfile);
                         setProfileExists(false);
                     }
                 }
@@ -190,7 +206,7 @@ export default function OnePageApp() {
                     const files = await apiService.getFiles(token);
                     if (!mounted) return;
                     setFilesList(files || []);
-                } catch (e) {
+                } catch (_err) {
                     setFilesList([]);
                 }
             } finally {
@@ -200,6 +216,21 @@ export default function OnePageApp() {
         load();
         return () => { mounted = false; };
     }, [isAuthenticated, view, token]);
+
+    // Respond to child-triggered refresh events
+    useEffect(() => {
+        if (!isAuthenticated) return;
+        const handler = async () => {
+            try {
+                const files = await apiService.getFiles(token);
+                setFilesList(files || []);
+            } catch {
+                // ignore
+            }
+        };
+        window.addEventListener('refresh-files', handler);
+        return () => window.removeEventListener('refresh-files', handler);
+    }, [isAuthenticated, token]);
 
     useEffect(() => {
         const onDoc = (e) => {
@@ -214,13 +245,13 @@ export default function OnePageApp() {
         try {
             if (isAuthenticated) localStorage.setItem('view', view);
             else localStorage.removeItem('view');
-        } catch { }
+        } catch (_err) { /* ignore storage error */ }
     }, [view, isAuthenticated]);
 
     useEffect(() => {
         if (!isAuthenticated) {
             setView('upload');
-            try { localStorage.removeItem('view'); } catch { }
+            try { localStorage.removeItem('view'); } catch (_err) { /* ignore storage error */ }
         }
     }, [isAuthenticated]);
 
@@ -260,7 +291,6 @@ export default function OnePageApp() {
 
         compute();
         window.addEventListener('resize', compute);
-        // Also recompute when fonts/load completes
         window.addEventListener('orientationchange', compute);
         const ro = new ResizeObserver(compute);
         if (headerRef.current) ro.observe(headerRef.current);
@@ -284,18 +314,13 @@ export default function OnePageApp() {
                         <div className="grid h-8 w-8 place-items-center rounded-lg bg-indigo-600 text-white shadow">
                             <UserIcon className="h-5 w-5" />
                         </div>
-                        <span className="text-lg font-semibold tracking-tight text-gray-900">MediDoc</span>
+                        <span className="text-lg font-semibold tracking-tight text-gray-900">Pharma DPD</span>
                     </div>
                     <div className="flex items-center gap-2">
                         {isAuthenticated ? (
                             <>
-                                <button
-                                    onClick={() => { setView('upload'); setShowProfileMenu(false); }}
-                                    className="flex items-center gap-2 rounded-lg bg-white px-3 py-1.5 text-sm font-medium border border-gray-200 hover:bg-gray-50"
-                                >
-                                    <ArrowUpTrayIcon className="h-4 w-4 text-gray-700" />
-                                    <span className="text-sm text-gray-700">Upload</span>
-                                </button>
+                                <button onClick={() => { setView('home'); setShowProfileMenu(false); }} className="flex items-center gap-2 rounded-lg bg-white px-3 py-1.5 text-sm font-medium border border-gray-200 hover:bg-gray-50">Home</button>
+                                <button onClick={() => { setView('schedule'); setShowProfileMenu(false); }} className="flex items-center gap-2 rounded-lg bg-white px-3 py-1.5 text-sm font-medium border border-gray-200 hover:bg-gray-50">Schedule</button>
                                 <ProfileMenu
                                     isOpen={showProfileMenu}
                                     onToggle={setShowProfileMenu}
@@ -381,18 +406,8 @@ export default function OnePageApp() {
                 ) : (
                     <div>
                         <div className="mx-auto max-w-2xl">
-                            {view === 'upload' && (
-                                <Card>
-                                    <h2 className="text-xl font-semibold text-gray-900">Upload document</h2>
-                                    <div className="mt-4 space-y-4">
-                                        <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-dashed border-gray-300 bg-gray-50 px-4 py-6 hover:bg-gray-100">
-                                            <ArrowUpTrayIcon className="h-6 w-6 text-gray-500" />
-                                            <span className="text-gray-700">{file ? file.name : 'Choose a file (PNG/JPEG/PDF up to 5MB)'} </span>
-                                            <input type="file" className="hidden" onChange={e => setFile(e.target.files?.[0] || null)} />
-                                        </label>
-                                        <button disabled={busy || !canUpload} onClick={async () => { await doUpload(); /* refresh files list */ try { const files = await apiService.getFiles(token); setFilesList(files || []); } catch { } }} className="w-full rounded-xl bg-indigo-600 px-4 py-2 font-semibold text-white hover:bg-indigo-500 disabled:opacity-50">{busy ? 'Uploading...' : 'Upload'}</button>
-                                    </div>
-                                </Card>
+                            {view === 'home' && (
+                                <HomeView file={file} setFile={setFile} fileName={fileName} setFileName={setFileName} doUpload={doUpload} busy={busy} canUpload={canUpload} token={token} filesList={filesList} loadingProfile={loadingProfile} setFilesList={setFilesList} />
                             )}
 
                             {view === 'profile' && (
@@ -405,6 +420,9 @@ export default function OnePageApp() {
 
                             {view === 'uploads' && (
                                 <UploadsView filesList={filesList} loadingProfile={loadingProfile} token={token} />
+                            )}
+                            {view === 'schedule' && (
+                                <ScheduleView token={token} />
                             )}
                             {view === 'chat' && (
                                 <div className="flex flex-col" style={{ height: chatHeight ? `${chatHeight}px` : `calc(var(--vh, 1vh) * 100 - 220px)` }}>
@@ -425,7 +443,7 @@ export default function OnePageApp() {
                                             </div>
                                         </div>
                                         <div className="mt-4 flex-1 min-h-0 overflow-auto chat-scroll" style={{ maxHeight: chatHeight }}>
-                                            <ChatView token={token} apiService={apiService} messages={chatMessages} setMessages={setChatMessages} />
+                                            <ChatView token={token} messages={chatMessages} setMessages={setChatMessages} />
                                         </div>
                                     </Card>
                                 </div>

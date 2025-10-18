@@ -22,5 +22,11 @@ class User(Base):
     is_active = Column(Boolean(), default=True)
     created_at = Column(DateTime(), default=datetime.utcnow)
     updated_at = Column(DateTime(), default=datetime.utcnow, onupdate=datetime.utcnow)
-    medical_profile = relationship("MedicalProfile", uselist=False, back_populates="user")
+    medical_profile = relationship(
+        "MedicalProfile",
+        uselist=False,
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
     files = relationship("UploadedFile", back_populates="user")

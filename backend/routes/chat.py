@@ -6,10 +6,13 @@ import os
 import requests
 import logging
 from utils.rag import profile_to_context
+from utils.llm_logger import log_llm_event
+from utils.prompts import render_prompt
 from urllib.parse import urlencode, urlparse, parse_qsl, urlunparse
 from sqlalchemy.orm import Session
 from db.session import get_db
 from models.medical_profile import MedicalProfile
+import time
 
 router = APIRouter()
 
@@ -53,7 +56,8 @@ def chat(req: ChatRequest, db: Session = Depends(get_db), current_user=Depends(g
         profile = None
     profile_ctx = profile_to_context(profile)
     if profile_ctx:
-        logging.info("Chat: including medical profile context (chars=%d)", len(profile_ctx))
+        # Avoid noisy console logs; just record a lightweight meta event
+        log_llm_event('chat.context', {"chars": len(profile_ctx)})
     meta = {
         "used_context": bool(profile_ctx),
         "context_chars": len(profile_ctx) if profile_ctx else 0,
@@ -75,9 +79,15 @@ def chat(req: ChatRequest, db: Session = Depends(get_db), current_user=Depends(g
         q['key'] = api_key
         llm_url = urlunparse(parsed._replace(query=urlencode(q)))
 
-    # Build prompt with RAG context
+    # Build prompt with RAG context using externalized template if available
         system_prompt = os.getenv('LLM_SYSTEM_PROMPT', 'You are a helpful assistant.')
-        combined = f"{system_prompt}\n\n{profile_ctx}\n\nUser: {req.message}" if profile_ctx else f"{system_prompt}\n\nUser: {req.message}"
+        rendered = None
+        try:
+            rendered = render_prompt('chat_system.txt', { 'PROFILE_CONTEXT': profile_ctx or '' })
+        except Exception:
+            rendered = None
+        effective_system = (rendered or system_prompt or 'You are a helpful assistant.').strip()
+        combined = f"{effective_system}\n\nUser: {req.message}"
 
         payload = {
             "contents": [
@@ -89,9 +99,21 @@ def chat(req: ChatRequest, db: Session = Depends(get_db), current_user=Depends(g
             }
         }
         try:
+            t0 = time.time()
             resp = requests.post(llm_url, json=payload, timeout=60)
+            duration_ms = int((time.time() - t0) * 1000)
+            # DB logging removed; file-based logging is handled separately
             resp.raise_for_status()
             data = resp.json()
+            # Log raw provider response to file
+            try:
+                log_llm_event('chat.gemini.response', {
+                    "status": resp.status_code,
+                    "duration_ms": duration_ms,
+                    "data": data,
+                })
+            except Exception:
+                pass
             reply = None
             try:
                 cands = data.get('candidates')
@@ -109,10 +131,10 @@ def chat(req: ChatRequest, db: Session = Depends(get_db), current_user=Depends(g
 
             return {"reply": reply, "raw": data, "meta": meta}
         except requests.exceptions.Timeout:
-            logging.error("Gemini request timed out")
+            log_llm_event('chat.gemini.timeout', {"url": llm_url})
             raise HTTPException(status_code=504, detail="Request to Gemini timed out")
         except requests.exceptions.RequestException as e:
-            logging.exception("Gemini request failed")
+            log_llm_event('chat.gemini.error', {"error": str(e)})
             raise HTTPException(status_code=502, detail=f"Gemini request failed: {str(e)}")
 
     # Non-Gemini providers: Decide payload shape based on endpoint URL
@@ -125,10 +147,14 @@ def chat(req: ChatRequest, db: Session = Depends(get_db), current_user=Depends(g
 
     if is_chat_completions:
         # Chat completions expect messages + model + top-level max_tokens/temperature
-        # build system prompt including user's medical profile as context
+        # build system prompt including user's medical profile as context via template
         system_prompt = os.getenv('LLM_SYSTEM_PROMPT', 'You are a helpful assistant.')
-        if profile_ctx:
-            system_prompt = system_prompt + "\n\n" + profile_ctx
+        rendered = None
+        try:
+            rendered = render_prompt('chat_system.txt', { 'PROFILE_CONTEXT': profile_ctx or '' })
+        except Exception:
+            rendered = None
+        system_prompt = (rendered or system_prompt or 'You are a helpful assistant.').strip()
 
         payload = {
             "model": model or None,
@@ -143,9 +169,14 @@ def chat(req: ChatRequest, db: Session = Depends(get_db), current_user=Depends(g
         if not payload.get('model'):
             payload.pop('model', None)
     elif is_completions:
-        # Older completions endpoints expect a 'prompt'
-        # prefix the user's medical profile to the prompt
-        prompt_text = (profile_ctx + "\n\n" + req.message) if profile_ctx else req.message
+        # Older completions endpoints expect a 'prompt'; prefix with system + profile via template
+        rendered = None
+        try:
+            rendered = render_prompt('chat_system.txt', { 'PROFILE_CONTEXT': profile_ctx or '' })
+        except Exception:
+            rendered = None
+        system_prompt = (rendered or os.getenv('LLM_SYSTEM_PROMPT', 'You are a helpful assistant.')).strip()
+        prompt_text = f"{system_prompt}\n\n{req.message}"
         payload = {
             "prompt": prompt_text,
             "max_tokens": max_tokens,
@@ -154,8 +185,14 @@ def chat(req: ChatRequest, db: Session = Depends(get_db), current_user=Depends(g
         if model:
             payload["model"] = model
     else:
-        # LM Studio 'input' style
-        input_text = (profile_ctx + "\n\n" + req.message) if profile_ctx else req.message
+        # LM Studio 'input' style, prefix with system prompt via template
+        rendered = None
+        try:
+            rendered = render_prompt('chat_system.txt', { 'PROFILE_CONTEXT': profile_ctx or '' })
+        except Exception:
+            rendered = None
+        system_prompt = (rendered or os.getenv('LLM_SYSTEM_PROMPT', 'You are a helpful assistant.')).strip()
+        input_text = f"{system_prompt}\n\n{req.message}"
         payload = {
             "input": input_text,
             "parameters": {
@@ -180,6 +217,13 @@ def chat(req: ChatRequest, db: Session = Depends(get_db), current_user=Depends(g
         )
         resp.raise_for_status()
         data = resp.json()
+        try:
+            log_llm_event('chat.llm.response', {
+                "status": resp.status_code,
+                "data": data,
+            })
+        except Exception:
+            pass
 
         reply = None
 
@@ -211,10 +255,10 @@ def chat(req: ChatRequest, db: Session = Depends(get_db), current_user=Depends(g
         return {"reply": (reply or '').strip(), "raw": data, "meta": meta}
 
     except requests.exceptions.Timeout:
-        logging.error("Upstream LLM request timed out")
+        log_llm_event('chat.llm.timeout', {"url": llm_url})
         raise HTTPException(status_code=504, detail="Request to upstream LLM timed out")
     except requests.exceptions.RequestException as e:
-        logging.exception("Upstream LLM request failed")
+        log_llm_event('chat.llm.error', {"error": str(e)})
         raise HTTPException(
             status_code=502,
             detail=f"Upstream LLM request failed: {str(e)}"

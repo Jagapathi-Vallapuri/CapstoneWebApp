@@ -1,4 +1,4 @@
-# MediDoc (Capstone)
+# Pharma DPD (Capstone)
 
 A full‑stack medical document assistant:
 - Upload prescriptions or medical documents to S3 and manage your uploads
@@ -19,7 +19,7 @@ A full‑stack medical document assistant:
 
 
 ## Overview
-MediDoc lets authenticated users upload documents (PNG/JPEG/PDF up to 5MB) to S3, keep a structured medical profile, and ask questions to an AI assistant. The assistant can optionally use your medical profile as context to tailor responses.
+Pharma DPD lets authenticated users upload documents (PNG/JPEG/PDF up to 5MB) to S3, keep a structured medical profile, and ask questions to an AI assistant. The assistant can optionally use your medical profile as context to tailor responses.
 
 
 ## Architecture
@@ -37,6 +37,13 @@ Repository layout:
   - `src/components/OnePageApp.jsx` main UI container
   - `src/components/Views.jsx` Uploads/Profile/Chat views
   - `src/services/api.js` Backend API client
+
+- `detection/` Stand‑alone CRAFT text detection microservice (FastAPI + PyTorch)
+  - `app/main.py` FastAPI entry (loads CRAFT weights once at startup)
+  - `app/craft_infer.py` Inference & post‑processing
+  - `craft_pytorch/` Model + utilities (NAVER CRAFT implementation)
+  - `weights/craft_mlt_25k.pth` Pretrained weights (English / MLT)
+  - Exposes `/detect/boxes/` and `/detect/image/` endpoints
 
 On backend startup, database tables are created automatically if they don’t exist.
 
@@ -80,6 +87,67 @@ Notes:
    npm run dev
    ```
 3. Open the app: http://localhost:5173
+
+### 3) (Optional) Text Detection Microservice (Docker + GPU)
+The OCR microservice is decoupled; you can deploy it independently and call it from the backend or frontend.
+
+Prerequisites (for GPU):
+- NVIDIA Driver installed on host (matching your GPU, CUDA 12 capable)  
+- Docker Engine + NVIDIA Container Toolkit (`nvidia-smi` works inside `docker run --rm --gpus all nvidia/cuda:12.2.0-base nvidia-smi`)
+
+Build image (from repo root):
+```powershell
+docker build -t craft-detection -f detection/Dockerfile detection
+```
+
+Run with GPU (preferred):
+```powershell
+docker run --rm --gpus all -p 8000:8000 --name craft-detect-gpu craft-detection
+```
+
+Run CPU only (if no GPU present):
+```powershell
+docker run --rm -e CUDA_VISIBLE_DEVICES="" -p 8000:8000 --name craft-detect-cpu craft-detection
+```
+
+Test (boxes JSON):
+```powershell
+curl -F "file=@testing/test_images/image1.jpg" http://localhost:8000/detect/boxes/
+```
+
+Test (annotated image response):
+```powershell
+curl -o out.jpg -F "file=@testing/test_images/image1.jpg" http://localhost:8000/detect/image/
+```
+
+Response (boxes) shape:
+```json
+{
+  "boxes": [ [ [x1,y1], [x2,y2], [x3,y3], [x4,y4] ], ... ]
+}
+```
+
+Notes:
+- Container already bundles `opencv-python-headless`; no GUI libraries needed.
+- `libGL.so.1` dependency satisfied in Dockerfile via `libgl1` install.
+- Weights are loaded from `weights/craft_mlt_25k.pth` at startup; ensure the file is present.
+- Add a reverse proxy or network policy if exposing publicly (rate limit uploads).
+
+Optional docker‑compose service snippet:
+```yaml
+  detection:
+    build:
+      context: ./detection
+      dockerfile: Dockerfile
+    image: craft-detection:latest
+    ports:
+      - "8000:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+```
 
 
 ## Configuration (env vars)

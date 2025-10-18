@@ -7,7 +7,6 @@ export default {
   theme: {
     extend: {},
   },
-  plugins: [
-    require('@tailwindcss/postcss')
-  ],
+  // Tailwind v4 uses the PostCSS plugin configured in postcss.config.js; no Tailwind plugins here.
+  plugins: [],
 }

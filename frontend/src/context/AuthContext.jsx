@@ -30,11 +30,12 @@ export const AuthProvider = ({ children }) => {
                 try {
                     const parsed = JSON.parse(storedUser);
                     emailOnly = parsed && typeof parsed === 'object' ? parsed.email : parsed;
-                } catch {
+                } catch (_err) {
                     emailOnly = storedUser;
                 }
                 setUser(emailOnly ? { email: emailOnly } : null);
-            } catch {
+            } catch (_err) {
+                // failed to parse stored user, ignore
                 setUser(null);
             }
         }
@@ -52,7 +53,7 @@ export const AuthProvider = ({ children }) => {
             try {
                 const me = await apiService.getMe(access_token);
                 userObject = me || userObject;
-            } catch (e) {
+            } catch (_err) {
                 console.warn('[Auth] Unable to fetch /auth/me, using minimal user object');
             }
 

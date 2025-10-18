@@ -1,6 +1,9 @@
 from pydantic_settings import BaseSettings
 from typing import List, Optional
 from pydantic import Field
+import os
+import json
+
 
 
 class Settings(BaseSettings):
@@ -16,22 +19,36 @@ class Settings(BaseSettings):
     S3_ACCESS_KEY_ID: str = ""
     S3_SECRET_ACCESS_KEY: str = ""
 
-    # CORS origins
-    ALLOWED_ORIGINS: List[str] = Field(default_factory=list)
-
     # LLM / Chat settings
     LLM_PROVIDER: str = "gemini"  # gemini | lmstudio | openai-compatible
     LLM_API_URL: Optional[str] = None
     LLM_API_KEY: Optional[str] = None
     LLM_MODEL: Optional[str] = None  # e.g., gemini-2.5-flash
-    LLM_MAX_TOKENS: int = 512
+    LLM_MAX_TOKENS: int = 2048
     LLM_TEMPERATURE: float = 0.2
+    LLM_SYSTEM_PROMPT: Optional[str] = None
+
+    # Detection service URL
+    detection_url: Optional[str] = None  # Accept DETECTION_URL from .env
+
+    ALLOWED_ORIGINS: List[str] = Field(default_factory=list)
 
     class Config:
         env_file = ".env"
 
 
 settings = Settings()
+
+# Allow ALLOWED_ORIGINS to be provided as a JSON array string or comma-separated list in the .env
+raw_allowed = os.getenv("ALLOWED_ORIGINS")
+if raw_allowed:
+    try:
+        parsed = json.loads(raw_allowed)
+        if isinstance(parsed, list):
+            settings.ALLOWED_ORIGINS = parsed
+    except Exception:
+        # Fallback: comma-separated
+        settings.ALLOWED_ORIGINS = [s.strip() for s in raw_allowed.split(',') if s.strip()]
 
 if not settings.SECRET_KEY or not settings.DATABASE_URL:
     raise RuntimeError("Environment variables SECRET_KEY and DATABASE_URL must be set (see backend/.env.example)")

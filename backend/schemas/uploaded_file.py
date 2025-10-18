@@ -7,6 +7,7 @@ class UploadedFileBase(BaseModel):
     file_type: Optional[str]
     status: Optional[str]
     extracted_data: Optional[str]
+    display_name: Optional[str]
 
 
 class UploadedFileCreate(UploadedFileBase):
@@ -18,5 +19,7 @@ class UploadedFileOut(UploadedFileBase):
     user_id: str
     upload_date: datetime
     s3_url: Optional[str]
+    last_retry_at: Optional[datetime] = None
+    retry_count: Optional[int] = 0
 
     model_config = ConfigDict(from_attributes=True)
