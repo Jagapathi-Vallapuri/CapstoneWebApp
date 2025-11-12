@@ -13,7 +13,6 @@ import io
 import json
 from models.prescription import Prescription
 from schemas.extraction import ExtractionPayload
-from sqlalchemy.orm import Session as OrmSession
 from urllib.parse import urlparse, parse_qsl, urlunparse, urlencode
 import boto3
 from botocore.exceptions import ClientError
@@ -27,102 +26,11 @@ import time
 from utils.llm_logger import log_llm_event
 from models.medication_schedule import MedicationSchedule
 from models.medical_profile import MedicalProfile
+from services.s3_service import delete_object_if_exists
+from services.file_service import delete_file_and_related
 from datetime import datetime, timedelta
 
 router = APIRouter()
-
-def _recompute_profile_after_delete(db: Session, user_id: str, removed_file_id: str, prev_parsed: Dict[str, Any]) -> None:
-    """Recompute MedicalProfile fields and medications_current from remaining accepted prescriptions.
-
-    - Aggregate unique medicines across remaining accepted prescriptions to set medications_current.
-    - For profile fields, choose the most recent non-empty candidate from remaining accepted prescriptions.
-    - If no candidate exists for a field, clear it only when the current value matches the removed file's value.
-    """
-    try:
-        remaining = db.query(Prescription).filter(
-            Prescription.user_id == user_id,
-            Prescription.accepted == True
-        ).all()
-        meds_union: list[str] = []
-        seen = set()
-        profile_candidates: Dict[str, Any] = {}
-
-        def pres_sort_key(p: Prescription):
-            at = getattr(p, 'accepted_at', None)
-            ed = getattr(p, 'extraction_date', None)
-            return ((at or datetime.min), (ed or datetime.min))
-
-        remaining_sorted = sorted(remaining, key=pres_sort_key, reverse=True)
-        for p in remaining_sorted:
-            try:
-                raw = cast(Optional[str], getattr(p, 'extracted_fields', None))
-                fields = json.loads(raw or '{}') if raw else {}
-            except Exception:
-                fields = {}
-            lp = fields.get('llm_parsed') if isinstance(fields, dict) else None
-            if not isinstance(lp, dict):
-                continue
-            # Aggregate meds
-            try:
-                for m in (lp.get('medicines') or []):
-                    if isinstance(m, str):
-                        mm = m.strip()
-                        if mm and mm.lower() not in seen:
-                            seen.add(mm.lower())
-                            meds_union.append(mm)
-            except Exception:
-                pass
-            # Profile candidates (first encountered from most recent)
-            for fname in ['present_conditions','diagnosed_conditions','medications_past','allergies','medical_history','family_history','surgeries','immunizations','lifestyle_factors']:
-                if fname in profile_candidates:
-                    continue
-                try:
-                    val = lp.get(fname)
-                    if isinstance(val, str) and val.strip():
-                        profile_candidates[fname] = val.strip()
-                except Exception:
-                    continue
-
-        profile = db.query(MedicalProfile).filter(MedicalProfile.user_id == user_id).first()
-        if not profile:
-            return
-
-        # medications_current from union
-        if meds_union:
-            setattr(profile, 'medications_current', ", ".join(meds_union))
-        else:
-            try:
-                prev_meds = []
-                for m in (prev_parsed.get('medicines') or []):
-                    if isinstance(m, str) and m.strip():
-                        prev_meds.append(m.strip())
-                prev_summary = ", ".join(prev_meds) if prev_meds else None
-                cur_val = getattr(profile, 'medications_current', None)
-                if prev_summary and cur_val and cur_val.strip() == prev_summary:
-                    setattr(profile, 'medications_current', None)
-            except Exception:
-                pass
-
-        # Profile fields
-        for fname in ['present_conditions','diagnosed_conditions','medications_past','allergies','medical_history','family_history','surgeries','immunizations','lifestyle_factors']:
-            cand = profile_candidates.get(fname)
-            if cand:
-                try:
-                    setattr(profile, fname, cand)
-                except Exception:
-                    pass
-            else:
-                try:
-                    prev_val = prev_parsed.get(fname)
-                    cur_val = getattr(profile, fname, None)
-                    if isinstance(prev_val, str) and prev_val.strip() and isinstance(cur_val, str) and cur_val.strip() == prev_val.strip():
-                        setattr(profile, fname, None)
-                except Exception:
-                    pass
-    except Exception:
-        # Non-fatal; do not block delete
-        pass
-
 @router.post("/upload", response_model=UploadedFileOut)
 def upload_file(
     file: UploadFile = File(...),
@@ -131,6 +39,7 @@ def upload_file(
     current_user=Depends(get_current_user)
 ):
     try:
+        # Read and validate content
         contents = file.file.read()
         size = len(contents)
         if size > 5 * 1024 * 1024:
@@ -143,13 +52,13 @@ def upload_file(
         if not (is_jpeg or is_png or is_pdf):
             raise HTTPException(status_code=400, detail={"error": "Invalid file type (magic number check failed)."})
 
-        # Sanitize filename and set per-user prefix
+        # Prepare S3 keys
         safe_filename = re.sub(r'[^a-zA-Z0-9_.-]', '_', file.filename or "uploaded_file")
         unique_filename = f"{uuid.uuid4()}_{safe_filename}"
         user_prefix = f"users/{current_user.id}/"
         s3_key_original = f"{user_prefix}{unique_filename}"
 
-        # Upload original bytes to S3
+        # Upload original
         s3 = boto3.client(
             "s3",
             aws_access_key_id=settings.S3_ACCESS_KEY_ID,
@@ -168,26 +77,21 @@ def upload_file(
             raise HTTPException(status_code=500, detail={"error": f"S3 upload failed: {str(e)}"})
 
         s3_url = f"https://{settings.S3_BUCKET}.s3.{settings.S3_REGION}.amazonaws.com/{s3_key_original}"
-        presigned_url = None
         try:
             presigned_url = s3.generate_presigned_url('get_object', Params={"Bucket": settings.S3_BUCKET, "Key": s3_key_original}, ExpiresIn=900)
         except Exception:
             presigned_url = None
 
-        # Determine a friendly display name for UI
-        friendly_name = None
+        # Friendly display name
         try:
             if display_name and display_name.strip():
                 friendly_name = display_name.strip()
             else:
-                # Compute an index per user: count existing files + 1
                 total = db.query(UploadedFile).filter(UploadedFile.user_id == current_user.id).count()
-                # Derive extension from original filename
-                root, ext = os.path.splitext(file.filename or '')
+                _, ext = os.path.splitext(file.filename or '')
                 ext = (ext or '').lower()
                 friendly_name = f"Document {total + 1}{ext}"
         except Exception:
-            # Fallback to original filename base or 'Document'
             root, ext = os.path.splitext(file.filename or '')
             friendly_name = (root or 'Document') + (ext or '')
 
@@ -206,13 +110,14 @@ def upload_file(
         boxes: Optional[list] = None
         llm_result = None
         llm_parsed = None
+        detection_img_bytes: Optional[bytes] = None
 
         def call_detection():
             try:
                 ct = file.content_type or "application/octet-stream"
                 resp = requests.post(
                     f"{detection_url}/detect/boxes/",
-                    files={"file": ("file", io.BytesIO(contents), ct)},
+                    files={"file": (safe_filename or "uploaded_image", io.BytesIO(contents), ct)},
                     timeout=20,
                 )
                 if resp.ok:
@@ -220,6 +125,20 @@ def upload_file(
                     return data.get('boxes')
             except Exception as e:
                 logging.warning(f"Detection call failed: {str(e)}")
+            return None
+
+        def call_detection_image():
+            try:
+                ct = file.content_type or "application/octet-stream"
+                resp = requests.post(
+                    f"{detection_url}/detect/image/",
+                    files={"file": (safe_filename or "uploaded_image", io.BytesIO(contents), ct)},
+                    timeout=30,
+                )
+                if resp.ok:
+                    return resp.content
+            except Exception as e:
+                logging.warning(f"Detection image call failed: {str(e)}")
             return None
 
         def call_llm():
@@ -239,8 +158,6 @@ def upload_file(
 
                 image_url_for_model = presigned_url or s3_url
                 schema = ExtractionPayload.model_json_schema()
-                # Prefer externalized prompt template if available
-                rendered = None
                 try:
                     rendered = render_prompt(
                         'extraction_system.txt',
@@ -281,7 +198,6 @@ def upload_file(
                     duration_ms = int((time.time() - t0) * 1000)
                     if r.ok:
                         resp_data = r.json()
-                        # Log raw provider response to file
                         try:
                             log_llm_event('extraction.gemini.response', {
                                 "status": r.status_code,
@@ -299,20 +215,17 @@ def upload_file(
                             result['llm_result'] = llm_reply
                             try:
                                 content = llm_reply
-                                # Remove markdown code fences if present
                                 if content.startswith('```'):
                                     content = content.strip()
                                     if content.startswith('```') and content.endswith('```'):
                                         content = content[3:-3].strip()
                                     if content.lower().startswith('json'):
                                         content = content[4:].lstrip('\n').lstrip()
-                                # Extract the first JSON object substring
                                 start = content.find('{')
                                 end = content.rfind('}')
                                 if start != -1 and end != -1 and end > start:
                                     content = content[start:end+1]
                                 parsed_obj = json.loads(content)
-                                # Validate/normalize against Pydantic schema
                                 payload = ExtractionPayload.model_validate(parsed_obj)
                                 result['llm_parsed'] = json.loads(payload.model_dump_json())
                             except Exception:
@@ -376,41 +289,64 @@ def upload_file(
                     pass
             return result
 
-        # Run detection and LLM concurrently
+        # Run detection (boxes and image) and LLM concurrently
         try:
-            with ThreadPoolExecutor(max_workers=2) as ex:
-                futs = {
+            with ThreadPoolExecutor(max_workers=3) as ex:
+                futures = {
                     ex.submit(call_detection): 'detection',
+                    ex.submit(call_detection_image): 'detection_image',
                     ex.submit(call_llm): 'llm',
                 }
-                for fut in as_completed(futs):
-                    name = futs.get(fut)
+                for fut in as_completed(futures):
+                    name = futures.get(fut)
                     try:
                         res = fut.result()
                         if name == 'detection':
                             boxes = res
+                        elif name == 'detection_image' and isinstance(res, (bytes, bytearray)):
+                            detection_img_bytes = bytes(res)
                         elif name == 'llm' and isinstance(res, dict):
                             llm_result = res.get('llm_result')
                             llm_parsed = res.get('llm_parsed')
                     except Exception as e:
                         logging.warning(f"Concurrent task {name} failed: {str(e)}")
 
-            # Ensure llm_parsed aligns with our schema if present
+            # Normalize llm payload if present
             normalized_llm = None
             if isinstance(llm_parsed, dict):
                 try:
-                    payload = ExtractionPayload.model_validate(llm_parsed)
-                    normalized_llm = json.loads(payload.model_dump_json())
+                    pl = ExtractionPayload.model_validate(llm_parsed)
+                    normalized_llm = json.loads(pl.model_dump_json())
                 except Exception:
                     normalized_llm = llm_parsed
+
+            # Upload detection image if available
+            detection_image_key = None
+            detection_image_s3 = None
+            try:
+                if detection_img_bytes:
+                    base_no_ext = os.path.splitext(unique_filename)[0]
+                    detection_image_key = f"{user_prefix}detection-results/{base_no_ext}.jpg"
+                    s3.upload_fileobj(
+                        io.BytesIO(detection_img_bytes),
+                        settings.S3_BUCKET,
+                        detection_image_key,
+                        ExtraArgs={"ContentType": "image/jpeg"}
+                    )
+                    detection_image_s3 = f"https://{settings.S3_BUCKET}.s3.{settings.S3_REGION}.amazonaws.com/{detection_image_key}"
+            except Exception as e:
+                logging.warning(f"Failed to upload detection image: {str(e)}")
 
             extracted_payload = {
                 "boxes": boxes,
                 "original_s3": s3_url,
                 "llm_result": llm_result,
                 "llm_parsed": normalized_llm,
+                "detection_image_key": detection_image_key,
+                "detection_image_s3": detection_image_s3,
             }
 
+            # Create prescription row
             prescription = Prescription(
                 user_id=db_file.user_id,
                 file_id=db_file.id,
@@ -420,28 +356,26 @@ def upload_file(
             db.commit()
             db.refresh(prescription)
         except Exception as e:
-            logging.error(f"Failed to run concurrent tasks or create prescription record: {str(e)}")
+            logging.error(f"Failed during detection/LLM or prescription creation: {str(e)}")
             try:
                 db.rollback()
             except Exception:
                 pass
 
+        # Update uploaded file with extracted payload
         try:
-            # Set to awaiting_review so frontend can prompt user to accept
             setattr(db_file, 'status', 'awaiting_review')
             setattr(db_file, 'extracted_data', json.dumps(extracted_payload))
             db.commit()
             db.refresh(db_file)
         except Exception:
-            # If previous transaction failed, ensure we can proceed
             try:
                 db.rollback()
             except Exception:
                 pass
 
         return db_file
-    except HTTPException as he:
-        logging.error(f"File upload error: {he.detail}")
+    except HTTPException:
         raise
     except Exception as e:
         logging.error(f"File upload failed: {str(e)}")
@@ -477,13 +411,11 @@ def presign_file(
 
     params = {"Bucket": settings.S3_BUCKET, "Key": file.filename}
     try:
-        # ensure the object actually exists in S3 before generating a presigned URL
         try:
             s3.head_object(Bucket=settings.S3_BUCKET, Key=file.filename)
         except ClientError as ce:
             err_code = getattr(ce, 'response', {}).get('Error', {}).get('Code')
             logging.warning(f"S3 head_object failed for key={file.filename}: {err_code}")
-            # NoSuchKey or 404-like responses
             raise HTTPException(status_code=404, detail="Object not found in S3")
 
         original = None
@@ -520,7 +452,6 @@ def get_extraction(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-    # ensure file exists and belongs to current user
     file = db.query(UploadedFile).filter(UploadedFile.id == file_id).first()
     if not file or file.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="File not found")
@@ -543,7 +474,6 @@ def get_medication_schedule(
     current_user=Depends(get_current_user)
 ):
     entries = db.query(MedicationSchedule).filter(MedicationSchedule.user_id == current_user.id).order_by(MedicationSchedule.created_at.desc()).all()
-    # Return a lightweight DTO
     return [
         {
             "id": e.id,
@@ -564,19 +494,16 @@ def accept_extraction(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-    # ensure file exists and belongs to current user
     file = db.query(UploadedFile).filter(UploadedFile.id == file_id).first()
     if not file or file.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="File not found")
 
-    # Load current extracted_data
     try:
         raw = cast(Optional[str], getattr(file, 'extracted_data', None))
         extracted = json.loads(raw or '{}')
     except Exception:
         extracted = {}
 
-    # If user provided a corrected payload, validate against schema and store it
     if body and isinstance(body, dict):
         incoming = body.get('payload')
         if incoming is not None:
@@ -587,14 +514,12 @@ def accept_extraction(
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"Invalid payload: {str(e)}")
 
-    # Persist back to UploadedFile and linked Prescription
     try:
         setattr(file, 'status', 'accepted')
         if hasattr(file, 'accepted'):
             setattr(file, 'accepted', True)
         setattr(file, 'extracted_data', json.dumps(extracted))
 
-        # Update linked prescription if exists
         pres = db.query(Prescription).filter(Prescription.file_id == file.id).first()
         if pres:
             try:
@@ -610,7 +535,6 @@ def accept_extraction(
                 from datetime import datetime
                 setattr(pres, 'accepted_at', datetime.utcnow())
 
-        # Also update medical profile and medication schedule if llm_parsed present
         try:
             parsed = extracted.get('llm_parsed') if isinstance(extracted, dict) else None
             if isinstance(parsed, dict):
@@ -623,7 +547,6 @@ def accept_extraction(
                 if not profile:
                     profile = MedicalProfile(user_id=file.user_id)
                     db.add(profile)
-                # Apply non-empty fields from payload
                 field_map = [
                     'present_conditions', 'diagnosed_conditions', 'medications_past', 'allergies',
                     'medical_history', 'family_history', 'surgeries', 'immunizations', 'lifestyle_factors'
@@ -635,11 +558,9 @@ def accept_extraction(
                             setattr(profile, fname, str(val).strip())
                     except Exception:
                         pass
-                # Update medications_current summary text on profile
                 summary = ", ".join(meds) if meds else None
                 if summary:
                     setattr(profile, 'medications_current', summary)
-                # Replace schedule entries for this file
                 try:
                     db.query(MedicationSchedule).filter(MedicationSchedule.user_id == file.user_id, MedicationSchedule.file_id == file.id).delete(synchronize_session=False)
                 except Exception:
@@ -657,7 +578,6 @@ def accept_extraction(
                     except Exception:
                         continue
         except Exception:
-            # non-fatal
             pass
 
         db.commit()
@@ -683,72 +603,13 @@ def delete_file(
     - Delete related Prescription row(s) then UploadedFile
     - Commit and return ok
     """
-    # ensure file exists and belongs to current user
     file = db.query(UploadedFile).filter(UploadedFile.id == file_id).first()
     if not file or file.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="File not found")
 
-    # Attempt S3 delete first so we don't orphan DB if S3 deletion fails
-    try:
-        s3 = boto3.client(
-            "s3",
-            aws_access_key_id=settings.S3_ACCESS_KEY_ID,
-            aws_secret_access_key=settings.S3_SECRET_ACCESS_KEY,
-            region_name=settings.S3_REGION,
-        )
-        try:
-            s3.delete_object(Bucket=settings.S3_BUCKET, Key=file.filename)
-        except ClientError as ce:
-            code = getattr(ce, 'response', {}).get('Error', {}).get('Code')
-            # Treat NoSuchKey as non-fatal
-            if str(code) not in ("NoSuchKey", "404"):
-                logging.error(f"S3 delete_object failed for key={file.filename}: {code}")
-                raise HTTPException(status_code=500, detail="Failed to delete from S3")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.error(f"Unexpected S3 error during delete: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to delete from S3")
+    delete_object_if_exists(file.filename)
 
-    # Delete related DB rows
-    try:
-        # Capture the existing prescription payload for this file (for potential undo logic)
-        prev_parsed = {}
-        try:
-            cur_pres = db.query(Prescription).filter(Prescription.file_id == file.id).first()
-            if cur_pres:
-                try:
-                    cur_raw = cast(Optional[str], getattr(cur_pres, 'extracted_fields', None))
-                    cur_fields = json.loads(cur_raw or '{}') if cur_raw else {}
-                except Exception:
-                    cur_fields = {}
-                prev_parsed = (cur_fields.get('llm_parsed') or {}) if isinstance(cur_fields, dict) else {}
-                if not isinstance(prev_parsed, dict):
-                    prev_parsed = {}
-        except Exception:
-            prev_parsed = {}
-
-        # Remove medication schedule entries linked to this file
-        try:
-            db.query(MedicationSchedule).filter(MedicationSchedule.file_id == file.id).delete(synchronize_session=False)
-        except Exception:
-            pass
-        # Remove prescriptions linked to this file
-        db.query(Prescription).filter(Prescription.file_id == file.id).delete(synchronize_session=False)
-
-        # Recompute user profile derived data from remaining accepted prescriptions
-        _recompute_profile_after_delete(db, str(file.user_id), str(file.id), prev_parsed)
-
-        # Finally remove the file record itself and commit
-        db.delete(file)
-        db.commit()
-    except Exception as e:
-        logging.error(f"DB delete failed: {str(e)}")
-        try:
-            db.rollback()
-        except Exception:
-            pass
-        raise HTTPException(status_code=500, detail="Failed to delete from database")
+    delete_file_and_related(db, file)
 
     return {"ok": True}
 
@@ -759,7 +620,6 @@ def retry_extraction(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
-    # ensure file exists and belongs to current user
     file = db.query(UploadedFile).filter(UploadedFile.id == file_id).first()
     if not file or file.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="File not found")
@@ -775,7 +635,6 @@ def retry_extraction(
         secs = int(remain.total_seconds())
         raise HTTPException(status_code=429, detail=f"Retry too soon. Try again in {secs} seconds")
 
-    # Re-run detection + LLM using the original S3 object
     s3_url = file.s3_url
     presigned_url = None
     try:
@@ -785,7 +644,6 @@ def retry_extraction(
             aws_secret_access_key=settings.S3_SECRET_ACCESS_KEY,
             region_name=settings.S3_REGION,
         )
-        # validate presence
         try:
             s3.head_object(Bucket=settings.S3_BUCKET, Key=file.filename)
             presigned_url = s3.generate_presigned_url('get_object', Params={"Bucket": settings.S3_BUCKET, "Key": file.filename}, ExpiresIn=900)
@@ -935,7 +793,6 @@ def retry_extraction(
         llm_result = res.get('llm_result') if isinstance(res, dict) else None
         llm_parsed = res.get('llm_parsed') if isinstance(res, dict) else None
 
-        # Update extracted_data and set status to awaiting_review if parsed
         payload = {
             "boxes": None,
             "original_s3": s3_url,

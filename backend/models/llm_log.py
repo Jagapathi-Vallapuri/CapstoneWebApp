@@ -12,7 +12,7 @@ class LLMLog(Base):
     file_id = Column(String(36), ForeignKey("uploaded_files.id"), nullable=True)
     provider = Column(String(50), nullable=True)
     model = Column(String(100), nullable=True)
-    route = Column(String(50), nullable=True)  # e.g., 'extraction', 'chat'
+    route = Column(String(50), nullable=True)
     url = Column(Text, nullable=True)
     status_code = Column(Integer, nullable=True)
     duration_ms = Column(Integer, nullable=True)

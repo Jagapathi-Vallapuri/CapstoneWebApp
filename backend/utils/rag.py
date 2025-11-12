@@ -1,7 +1,6 @@
 from typing import Optional
 from models.medical_profile import MedicalProfile
 
-# Lightweight helper to format a user's medical profile into text to include as RAG context
 
 def profile_to_context(profile: Optional[MedicalProfile]) -> str:
     if not profile:

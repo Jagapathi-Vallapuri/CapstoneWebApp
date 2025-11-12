@@ -15,7 +15,6 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
     hashed_password = get_password_hash(user.password)
-    # Normalize gender to the Gender enum if provided (accept case-insensitive values)
     gender_enum = None
     if user.gender:
         try:

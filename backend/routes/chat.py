@@ -36,7 +36,6 @@ def chat(req: ChatRequest, db: Session = Depends(get_db), current_user=Depends(g
     except Exception:
         settings = None
 
-    # Get configuration with fallbacks (pydantic settings preferred)
     provider = (getattr(settings, 'LLM_PROVIDER', None) if settings else None) or os.getenv('LLM_PROVIDER', 'gemini')
     model = (getattr(settings, 'LLM_MODEL', None) if settings else None) or os.getenv('LLM_MODEL', 'gemini-2.5-flash')
     api_key = (getattr(settings, 'LLM_API_KEY', None) if settings else None) or os.getenv('LLM_API_KEY')
@@ -49,28 +48,23 @@ def chat(req: ChatRequest, db: Session = Depends(get_db), current_user=Depends(g
         (getattr(settings, 'LLM_TEMPERATURE', None) if settings else None) or os.getenv("LLM_TEMPERATURE", "0.2")
     )
 
-    # Build RAG context from user's medical profile using an active DB session
     try:
         profile = db.query(MedicalProfile).filter(MedicalProfile.user_id == getattr(current_user, 'id', None)).first()
     except Exception:
         profile = None
     profile_ctx = profile_to_context(profile)
     if profile_ctx:
-        # Avoid noisy console logs; just record a lightweight meta event
         log_llm_event('chat.context', {"chars": len(profile_ctx)})
     meta = {
         "used_context": bool(profile_ctx),
         "context_chars": len(profile_ctx) if profile_ctx else 0,
     }
 
-    # If Gemini provider, construct URL if needed and call Gemini API branch
     if provider.lower() == 'gemini':
         if not model:
             model = 'gemini-2.5-flash'
-        # Construct default Gemini endpoint if not provided
         if not llm_url:
             llm_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-        # Append API key as query param
         if not api_key:
             logging.error('Gemini API key missing')
             raise HTTPException(status_code=500, detail='LLM API key not configured for Gemini')
@@ -79,7 +73,6 @@ def chat(req: ChatRequest, db: Session = Depends(get_db), current_user=Depends(g
         q['key'] = api_key
         llm_url = urlunparse(parsed._replace(query=urlencode(q)))
 
-    # Build prompt with RAG context using externalized template if available
         system_prompt = os.getenv('LLM_SYSTEM_PROMPT', 'You are a helpful assistant.')
         rendered = None
         try:
@@ -102,10 +95,8 @@ def chat(req: ChatRequest, db: Session = Depends(get_db), current_user=Depends(g
             t0 = time.time()
             resp = requests.post(llm_url, json=payload, timeout=60)
             duration_ms = int((time.time() - t0) * 1000)
-            # DB logging removed; file-based logging is handled separately
             resp.raise_for_status()
             data = resp.json()
-            # Log raw provider response to file
             try:
                 log_llm_event('chat.gemini.response', {
                     "status": resp.status_code,
@@ -137,7 +128,6 @@ def chat(req: ChatRequest, db: Session = Depends(get_db), current_user=Depends(g
             log_llm_event('chat.gemini.error', {"error": str(e)})
             raise HTTPException(status_code=502, detail=f"Gemini request failed: {str(e)}")
 
-    # Non-Gemini providers: Decide payload shape based on endpoint URL
     if not llm_url:
         logging.error('LLM API URL missing for non-Gemini provider')
         raise HTTPException(status_code=500, detail='LLM API URL not configured')
@@ -146,8 +136,6 @@ def chat(req: ChatRequest, db: Session = Depends(get_db), current_user=Depends(g
     is_completions = ('completions' in lower_url) and not is_chat_completions
 
     if is_chat_completions:
-        # Chat completions expect messages + model + top-level max_tokens/temperature
-        # build system prompt including user's medical profile as context via template
         system_prompt = os.getenv('LLM_SYSTEM_PROMPT', 'You are a helpful assistant.')
         rendered = None
         try:
@@ -165,11 +153,9 @@ def chat(req: ChatRequest, db: Session = Depends(get_db), current_user=Depends(g
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
-        # remove explicit None model
         if not payload.get('model'):
             payload.pop('model', None)
     elif is_completions:
-        # Older completions endpoints expect a 'prompt'; prefix with system + profile via template
         rendered = None
         try:
             rendered = render_prompt('chat_system.txt', { 'PROFILE_CONTEXT': profile_ctx or '' })
@@ -185,7 +171,6 @@ def chat(req: ChatRequest, db: Session = Depends(get_db), current_user=Depends(g
         if model:
             payload["model"] = model
     else:
-        # LM Studio 'input' style, prefix with system prompt via template
         rendered = None
         try:
             rendered = render_prompt('chat_system.txt', { 'PROFILE_CONTEXT': profile_ctx or '' })
@@ -203,7 +188,6 @@ def chat(req: ChatRequest, db: Session = Depends(get_db), current_user=Depends(g
         if model:
             payload["model"] = model
 
-    # prepare headers (Bearer) if API key provided
     headers = {}
     if api_key:
         headers['Authorization'] = f'Bearer {api_key}'

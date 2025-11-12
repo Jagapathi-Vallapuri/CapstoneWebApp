@@ -88,6 +88,25 @@ Notes:
    ```
 3. Open the app: http://localhost:5173
 
+### 3) DDI assets: generate labels.json (for your DDI model)
+If you trained a Drug-Drug Interaction (DDI) model and need a stable label mapping for inference, use the helper script to create `labels.json` from your dataset's `train.csv`.
+
+```powershell
+# From repo root
+python backend/scripts/prepare_ddi_assets.py `
+  --dataset-dir "C:\\path\\to\\MUDI\\dataset" `
+  --out-dir "C:\\path\\to\\models" `
+  --drug-info "C:\\path\\to\\drug_info.json" `
+  --use-test
+```
+
+This will write:
+- `labels.json` – contains `label_to_id`, `id_to_label`, `class_list`, `num_classes` (mapping derived from train.csv in first-seen order)
+- `summary.json` – basic class distribution stats (train and optionally test)
+- `drug_name_to_id.json` – optional, if `--drug-info` is provided
+
+You can then point your inference service to the produced `labels.json` and `drug_info.json` files.
+
 ### 3) (Optional) Text Detection Microservice (Docker + GPU)
 The OCR microservice is decoupled; you can deploy it independently and call it from the backend or frontend.
 
@@ -102,22 +121,22 @@ docker build -t craft-detection -f detection/Dockerfile detection
 
 Run with GPU (preferred):
 ```powershell
-docker run --rm --gpus all -p 8000:8000 --name craft-detect-gpu craft-detection
+docker run --rm --gpus all -p 8100:8000 --name craft-detect-gpu craft-detection
 ```
 
 Run CPU only (if no GPU present):
 ```powershell
-docker run --rm -e CUDA_VISIBLE_DEVICES="" -p 8000:8000 --name craft-detect-cpu craft-detection
+docker run --rm -e CUDA_VISIBLE_DEVICES="" -p 8100:8000 --name craft-detect-cpu craft-detection
 ```
 
 Test (boxes JSON):
 ```powershell
-curl -F "file=@testing/test_images/image1.jpg" http://localhost:8000/detect/boxes/
+curl -F "file=@testing/test_images/image1.jpg" http://localhost:8100/detect/boxes/
 ```
 
 Test (annotated image response):
 ```powershell
-curl -o out.jpg -F "file=@testing/test_images/image1.jpg" http://localhost:8000/detect/image/
+curl -o out.jpg -F "file=@testing/test_images/image1.jpg" http://localhost:8100/detect/image/
 ```
 
 Response (boxes) shape:

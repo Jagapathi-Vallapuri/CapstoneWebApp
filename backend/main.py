@@ -36,7 +36,6 @@ if auto_flag:
     if primary_ip:
         candidates.append(f"http://{primary_ip}:{frontend_port}")
 
-    # Add candidates if not already present
     for c in candidates:
         if c not in allow_origins:
             allow_origins.append(c)

@@ -46,7 +46,6 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     )
 
     try:
-        # Verify signature and claims, but we'll check exp manually to allow small tolerance
         payload = jwt.decode(
             token,
             str(settings.SECRET_KEY),
@@ -57,7 +56,6 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         logging.warning(f"JWT decode failed: {e}")
         raise credentials_exception
 
-    # Manual exp check with small tolerance
     exp = payload.get("exp")
     if isinstance(exp, (int, float)):
         now = int(datetime.utcnow().timestamp())

@@ -20,16 +20,16 @@ class Settings(BaseSettings):
     S3_SECRET_ACCESS_KEY: str = ""
 
     # LLM / Chat settings
-    LLM_PROVIDER: str = "gemini"  # gemini | lmstudio | openai-compatible
+    LLM_PROVIDER: str = "gemini"
     LLM_API_URL: Optional[str] = None
     LLM_API_KEY: Optional[str] = None
-    LLM_MODEL: Optional[str] = None  # e.g., gemini-2.5-flash
+    LLM_MODEL: Optional[str] = None
     LLM_MAX_TOKENS: int = 2048
     LLM_TEMPERATURE: float = 0.2
     LLM_SYSTEM_PROMPT: Optional[str] = None
 
     # Detection service URL
-    detection_url: Optional[str] = None  # Accept DETECTION_URL from .env
+    detection_url: Optional[str] = None 
 
     ALLOWED_ORIGINS: List[str] = Field(default_factory=list)
 
@@ -39,7 +39,6 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# Allow ALLOWED_ORIGINS to be provided as a JSON array string or comma-separated list in the .env
 raw_allowed = os.getenv("ALLOWED_ORIGINS")
 if raw_allowed:
     try:
@@ -47,7 +46,6 @@ if raw_allowed:
         if isinstance(parsed, list):
             settings.ALLOWED_ORIGINS = parsed
     except Exception:
-        # Fallback: comma-separated
         settings.ALLOWED_ORIGINS = [s.strip() for s in raw_allowed.split(',') if s.strip()]
 
 if not settings.SECRET_KEY or not settings.DATABASE_URL:

@@ -82,7 +82,9 @@ Icon?
 coverage/
 reports/
 
-testing/
-detection/
 logs/
 uploads/
+services/ddi-infer/assets/
+services/detection/craft_pytorch/
+services/detection/weights/
+test/

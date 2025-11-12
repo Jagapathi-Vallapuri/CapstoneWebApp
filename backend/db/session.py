@@ -4,13 +4,9 @@ from sqlalchemy.engine import make_url
 from core.config import settings
 from typing import cast
 
-# Create a robust SQLAlchemy engine suitable for cloud DBs (e.g., RDS)
-# - pool_pre_ping avoids stale connection issues
-# - pool_recycle helps with MySQL "server has gone away" on long idle
-# - SQLite requires special connect args when used in dev
 _engine_kwargs = {
     "pool_pre_ping": True,
-    "pool_recycle": 1800,  # seconds
+    "pool_recycle": 1800,
 }
 
 try:

@@ -14,7 +14,6 @@ class ExtractionPayload(BaseModel):
     medicines: List[str] = Field(default_factory=list, description="List of medicine names mentioned")
     medications_details: List[MedicationDetail] = Field(default_factory=list, description="Structured details for each medicine")
     additional_info: Optional[str] = Field(None, description="Any other notable details from the prescription")
-    # Optional medical profile fields that the LLM can fill if present in the doc
     present_conditions: Optional[str] = Field(None, description="Current/present conditions")
     diagnosed_conditions: Optional[str] = Field(None, description="Diagnosed conditions")
     medications_past: Optional[str] = Field(None, description="Past medications")

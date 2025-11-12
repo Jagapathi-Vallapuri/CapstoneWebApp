@@ -29,10 +29,9 @@ class UploadedFile(Base):
         from core.config import settings
         return f"https://{settings.S3_BUCKET}.s3.{settings.S3_REGION}.amazonaws.com/{self.filename}"
 
-    # Convenience helpers for extracted_data JSON
     def get_extracted_json(self):
         import json
-        raw_obj: object = self.extracted_data  # avoid static typing confusion with Column[str]
+        raw_obj: object = self.extracted_data
         try:
             s = raw_obj if isinstance(raw_obj, str) else ''
             return json.loads(s or '{}')

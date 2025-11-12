@@ -19,5 +19,4 @@ class UserOut(UserBase):
     created_at: datetime
     updated_at: datetime
 
-    # Pydantic v2: use from_attributes
     model_config = ConfigDict(from_attributes=True)
